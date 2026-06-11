@@ -24,6 +24,7 @@ mod issue_repros;
 mod kill_ring;
 mod large_buffer;
 mod menus;
+mod multiline_edit;
 mod resize;
 mod right_prompt;
 mod scrolling;
