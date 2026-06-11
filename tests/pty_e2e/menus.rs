@@ -8,10 +8,68 @@ fn tab_opens_menu_with_candidates() {
     let term = TestTerm::builder().size(10, 40).completion_menu().spawn();
     term.expect_cursor(0, 5);
     term.send("al<Tab>");
-    // All "al"-prefixed candidates render below the prompt.
-    term.expect_contains("alpha");
+    // Exact layout: ColumnarMenu paints its "| " marker after the prompt
+    // and the candidates in fixed-width columns on the row below.
+    term.expect_screen(
+        "tst> | al\n\
+         alpha     alphabet  alphard",
+    );
+    term.quit_after_clear();
+}
+
+#[test]
+fn ide_menu_renders_unicode_candidates_with_description() {
+    let term = TestTerm::builder()
+        .size(12, 40)
+        .env("FIX_MENU", "ide")
+        .spawn();
+    term.expect_cursor(0, 5);
+    term.send("h<Tab>");
+    // Candidates with combining accents and the selected candidate's
+    // description must both render (issues #998/#996 were width bugs here).
+    term.expect_contains("héllo");
+    term.expect_contains("héllium");
+    term.expect_contains("greeting");
+    term.send("<Enter>");
+    term.expect_line(0, "tst> héllo");
+    term.send("<Enter>");
+    term.expect_contains("GOT: héllo");
+    term.quit();
+}
+
+#[test]
+fn ide_menu_handles_wide_glyph_candidates() {
+    let term = TestTerm::builder()
+        .size(12, 40)
+        .env("FIX_MENU", "ide")
+        .spawn();
+    term.expect_cursor(0, 5);
+    term.send("日<Tab>");
+    term.expect_contains("日本語x");
+    term.send("<Enter>");
+    term.expect_line(0, "tst> 日本語x");
+    term.quit_after_clear();
+}
+
+#[test]
+fn partial_completion_inserts_common_prefix() {
+    let term = TestTerm::builder()
+        .size(10, 40)
+        .completion_menu()
+        .env("FIX_PARTIAL", "1")
+        .spawn();
+    term.expect_cursor(0, 5);
+    // Common prefix of alpha/alphabet/alphard is "alpha" (#1001 class).
+    term.send("al<Tab>");
     term.expect_contains("alphabet");
-    term.expect_contains("alphard");
+    term.expect("buffer to hold the common prefix", |screen| {
+        let row = &screen_rows(screen)[0];
+        if row.contains("alpha") {
+            Ok(())
+        } else {
+            Err(format!("row 0: {row:?}"))
+        }
+    });
     term.quit_after_clear();
 }
 

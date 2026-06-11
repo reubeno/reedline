@@ -64,6 +64,21 @@ fn checklist_emoji_line_round_trips() {
 }
 
 #[test]
+fn emoji_straddling_wrap_boundary_moves_whole_glyph() {
+    let term = TestTerm::builder().size(6, 10).spawn();
+    term.expect_cursor(0, 5);
+    // "abcd" ends at col 8; the emoji needs cols 9..11 but only col 9
+    // remains: the whole glyph must wrap, never split across rows.
+    term.send("abcd😊");
+    term.expect_line(0, "tst> abcd");
+    term.expect_line(1, "😊");
+    term.expect_cursor(1, 2);
+    term.send("<BS>!");
+    term.expect_screen("tst> abcd!");
+    term.quit_after_clear();
+}
+
+#[test]
 fn home_and_end_remain_accurate_with_wide_chars() {
     let term = TestTerm::spawn();
     term.expect_cursor(0, 5);

@@ -27,6 +27,21 @@ fn very_narrow_terminal_survives_input() {
 // grid scrolling) on single-row screens, so the harness cannot observe one.
 
 #[test]
+fn prompt_wider_than_terminal_wraps_and_stays_editable() {
+    let term = TestTerm::builder()
+        .size(8, 20)
+        .prompt(&format!("{}> ", "P".repeat(30)))
+        .spawn();
+    // 32-cell prompt wraps over two rows at 20 cols.
+    term.expect_contains("PPPPP");
+    term.send("hi");
+    term.expect_contains("> hi");
+    term.send("<Enter>");
+    term.expect_contains("GOT: hi");
+    term.quit();
+}
+
+#[test]
 fn shrink_to_tiny_then_restore() {
     let term = TestTerm::builder().size(12, 40).spawn();
     term.send("resilient");

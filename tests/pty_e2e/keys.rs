@@ -23,12 +23,15 @@ pub fn keys_to_chunks(spec: &str) -> Vec<Vec<u8>> {
             continue;
         }
         let mut token = String::new();
+        let mut closed = false;
         for t in chars.by_ref() {
             if t == '>' {
+                closed = true;
                 break;
             }
             token.push(t);
         }
+        assert!(closed, "unclosed key token <{token} in {spec:?}");
         chunks
             .last_mut()
             .unwrap()

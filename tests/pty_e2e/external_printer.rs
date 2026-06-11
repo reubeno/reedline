@@ -40,8 +40,49 @@ fn external_message_at_bottom_scrolls_cleanly() {
     term.send(":fill 6<Enter>");
     term.expect_line(5, "tst>");
     term.send(":ext FROM-THREAD<Enter>");
-    term.expect_contains("FROM-THREAD");
-    // Prompt must end up below the message on the bottom row, still usable.
+    // Deterministic final state: the filler above must survive the scroll
+    // exactly; a stale anchor clobbers or duplicates rows here.
+    term.expect_screen(
+        "fill-004\n\
+         fill-005\n\
+         fill-006\n\
+         tst> :ext FROM-THREAD\n\
+         FROM-THREAD\n\
+         tst> ",
+    );
+    term.send("ok<Enter>");
+    term.expect_contains("GOT: ok");
+    term.quit();
+}
+
+#[test]
+fn wrapped_external_message_keeps_prompt_below_it() {
+    let term = TestTerm::builder().size(8, 20).spawn();
+    term.expect_cursor(0, 5);
+    // A 50-cell message wraps to 3 rows at 20 cols, but the painter's row
+    // bookkeeping counts each message as one row (painter.rs admits the
+    // one-sided drift check cannot catch this).
+    let message = "M".repeat(50);
+    term.send(&format!(":ext {message}<Enter>"));
+    term.expect_contains(&"M".repeat(20));
+    term.expect("all message rows above the prompt", |screen| {
+        let rows = crate::harness::screen_rows(screen);
+        let total_m: usize = rows
+            .iter()
+            .map(|r| r.chars().filter(|c| *c == 'M').count())
+            .sum();
+        // 50 from the message; the typed ":ext MMM..." command echo may
+        // have scrolled partially or fully off, so require at least 50.
+        if total_m < 50 {
+            return Err(format!("only {total_m} M cells visible"));
+        }
+        let last_m = rows.iter().rposition(|r| r.starts_with('M'));
+        let prompt = rows.iter().rposition(|r| r.starts_with("tst>"));
+        match (last_m, prompt) {
+            (Some(m), Some(p)) if p > m => Ok(()),
+            (m, p) => Err(format!("message rows at {m:?}, prompt at {p:?}")),
+        }
+    });
     term.send("ok<Enter>");
     term.expect_contains("GOT: ok");
     term.quit();

@@ -8,6 +8,7 @@
 mod harness;
 mod keys;
 
+mod abbreviations;
 mod basics;
 mod buffer_editor;
 mod clearing;
@@ -16,11 +17,17 @@ mod edge_sizes;
 #[cfg(feature = "external_printer")]
 mod external_printer;
 mod highlighting;
+mod hints;
 mod history;
 mod host_output;
+mod issue_repros;
+mod kill_ring;
+mod large_buffer;
 mod menus;
 mod resize;
 mod right_prompt;
 mod scrolling;
+mod suspension;
+mod transient;
 mod unicode;
 mod vi_mode;

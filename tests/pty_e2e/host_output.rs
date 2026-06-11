@@ -40,7 +40,33 @@ fn prompt_after_partial_output_paints_and_edits_cleanly() {
     term.expect_line(2, "tst>");
     term.send("abc<Left>X");
     term.expect_line(2, "tst> abXc");
-    // The partial host line above must remain untouched by repaints.
+    // The partial host line above must remain untouched by repaints —
+    // enforced as a real negative: nothing may change once painted.
     term.expect_line(1, "stub");
+    term.expect_unchanged(crate::harness::unchanged_window());
     term.quit_after_clear();
+}
+
+#[test]
+fn host_output_ending_exactly_at_last_column() {
+    let term = TestTerm::builder().size(6, 20).spawn();
+    term.expect_cursor(0, 5);
+    // ":raw " + 14 chars = a 20-cell output row: the cursor ends pending at
+    // the last column. The next prompt must start on a fresh row without
+    // clobbering the output (this is the edge the `position.1 + 1 < row`
+    // tolerance in the drift check exists for).
+    term.send(":raw ABCDEFGHIJKLMN<Enter>");
+    term.expect_contains("ABCDEFGHIJKLMN");
+    term.expect("prompt below the full-width output", |screen| {
+        let rows = crate::harness::screen_rows(screen);
+        let out = rows.iter().position(|r| r.ends_with("ABCDEFGHIJKLMN"));
+        let prompt = rows.iter().rposition(|r| r == "tst>");
+        match (out, prompt) {
+            (Some(o), Some(p)) if p > o => Ok(()),
+            (o, p) => Err(format!("output at {o:?}, prompt at {p:?}")),
+        }
+    });
+    term.send("ok<Enter>");
+    term.expect_contains("GOT: ok");
+    term.quit();
 }

@@ -61,6 +61,87 @@ fn resize_with_prompt_at_bottom() {
 }
 
 #[test]
+fn multiline_prompt_survives_resize_recalibration() {
+    // The just_resized calibration (prompt row = cursor row − prompt lines
+    // above) exists for multi-line prompts (#841/#848/#930); exercise it.
+    let term = TestTerm::builder()
+        .size(10, 40)
+        .prompt("info\\ntst> ")
+        .spawn();
+    term.send("hello");
+    term.expect_screen(
+        "info\n\
+         tst> hello",
+    );
+    term.resize(10, 25);
+    term.expect_contains("tst> hello");
+    term.expect("exactly one info line above the prompt", |screen| {
+        let rows = crate::harness::screen_rows(screen);
+        let infos = rows.iter().filter(|r| r.as_str() == "info").count();
+        if infos == 1 {
+            Ok(())
+        } else {
+            Err(format!("{infos} info lines"))
+        }
+    });
+    term.send("<Enter>");
+    term.expect_contains("GOT: hello");
+    term.quit();
+}
+
+#[test]
+fn typing_interleaved_with_resize_storm_keeps_buffer() {
+    let term = TestTerm::builder().size(12, 40).spawn();
+    term.expect_cursor(0, 5);
+    term.send("abc");
+    // Deliberately no expects between: keystrokes race SIGWINCH repaints.
+    for (rows, cols) in [(10, 30), (14, 50), (8, 22), (12, 40)] {
+        term.resize(rows, cols);
+        term.send("x");
+    }
+    term.expect_contains("abcxxxx");
+    term.send("<Enter>");
+    term.expect_contains("GOT: abcxxxx");
+    term.quit();
+}
+
+#[test]
+fn resize_during_history_search_keeps_indicator() {
+    let term = TestTerm::builder()
+        .size(8, 25)
+        .history(&["first command"])
+        .spawn();
+    term.send("<C-r>fir");
+    term.expect_contains("(search:fir)");
+    term.resize(8, 60);
+    term.expect_contains("(search:fir) first command");
+    term.send("<C-c>");
+    term.expect_fresh_prompt();
+    term.quit();
+}
+
+#[test]
+fn resize_with_open_menu_keeps_candidates() {
+    let term = TestTerm::builder().size(10, 40).completion_menu().spawn();
+    term.expect_cursor(0, 5);
+    term.send("al<Tab>");
+    term.expect_contains("alphabet");
+    term.resize(10, 30);
+    term.expect_contains("alpha");
+    // Menu stays usable after the resize repaint.
+    term.send("<Enter>");
+    term.expect("completed candidate in buffer", |screen| {
+        let row = &crate::harness::screen_rows(screen)[0];
+        if row.starts_with("tst> alpha") {
+            Ok(())
+        } else {
+            Err(format!("row 0: {row:?}"))
+        }
+    });
+    term.quit_after_clear();
+}
+
+#[test]
 fn repeated_resizes_do_not_corrupt_screen() {
     let term = TestTerm::builder().size(12, 40).spawn();
     term.send("stable text");

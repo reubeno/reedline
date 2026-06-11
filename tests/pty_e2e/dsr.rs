@@ -51,7 +51,7 @@ fn typing_and_repainting_issue_no_dsr() {
 }
 
 #[test]
-fn clear_screen_costs_at_most_one_dsr() {
+fn clear_screen_costs_exactly_one_dsr() {
     let term = TestTerm::spawn();
     term.expect_screen("tst> ");
     term.send("x<Enter>");
@@ -61,9 +61,111 @@ fn clear_screen_costs_at_most_one_dsr() {
     term.send("keep<C-l>");
     term.expect_screen("tst> keep");
     let delta = term.dsr_count() - baseline;
-    assert!(
-        delta <= 1,
-        "Ctrl-L re-anchors at row 0; it needs at most one query (saw {delta})"
+    // clear_screen re-measures via initialize_prompt_position. The cursor is
+    // at (0,0) by construction there, so this could legitimately become 0 if
+    // that query is ever optimized away — update this pin when it does.
+    assert_eq!(
+        delta, 1,
+        "Ctrl-L re-anchors at row 0 with exactly one query (saw {delta})"
     );
     term.quit_after_clear();
+}
+
+#[test]
+fn menu_and_history_search_issue_no_dsr() {
+    let term = TestTerm::builder()
+        .completion_menu()
+        .history(&["alpha one"])
+        .spawn();
+    term.expect_screen("tst> ");
+    let base = term.dsr_count();
+
+    // Menu open, navigate, close: all plain repaints.
+    term.send("al<Tab>");
+    term.expect_contains("alphabet");
+    term.send("<Tab><Esc>");
+    term.expect_line(0, "tst> al");
+    assert_eq!(term.dsr_count(), base, "menu interaction must not query");
+
+    // History search repaints.
+    term.send("<C-r>al");
+    term.expect_contains("(search:al)");
+    assert_eq!(term.dsr_count(), base, "history search must not query");
+
+    // Aborting costs the next read_line's single init query. Note: Ctrl-C
+    // from history search restores the pre-search buffer ("al") into the
+    // next read_line rather than clearing it.
+    term.send("<C-c>");
+    term.expect_line(2, "tst> al");
+    assert_eq!(term.dsr_count(), base + 1);
+    term.quit_after_clear();
+}
+
+#[test]
+fn history_recall_issues_no_dsr() {
+    let term = TestTerm::builder().history(&["first", "second"]).spawn();
+    term.expect_screen("tst> ");
+    let base = term.dsr_count();
+    term.send("<Up><Up><Down>");
+    term.expect_screen("tst> second");
+    assert_eq!(term.dsr_count(), base, "history recall must not query");
+    term.quit_after_clear();
+}
+
+#[test]
+fn buffer_editor_costs_exactly_one_dsr() {
+    let term = TestTerm::builder()
+        .editor_cmd("printf 'edited' > \"$1\"")
+        .spawn();
+    term.expect_screen("tst> ");
+    let base = term.dsr_count();
+    term.send("d<C-o>");
+    term.expect_screen("tst> edited");
+    assert_eq!(
+        term.dsr_count(),
+        base + 1,
+        "returning from the editor re-measures the anchor exactly once"
+    );
+    term.quit_after_clear();
+}
+
+#[test]
+fn resize_costs_at_most_two_dsr() {
+    let term = TestTerm::builder().size(12, 40).spawn();
+    term.expect_screen("tst> ");
+    term.send("abc");
+    term.expect_screen("tst> abc");
+    let base = term.dsr_count();
+    term.resize(16, 60);
+    term.expect_contains("tst> abc");
+    let delta = term.dsr_count() - base;
+    // handle_resize measures once; the next repaint re-verifies the Stale
+    // anchor with one more query.
+    assert!(
+        delta <= 2,
+        "resize should cost at most 2 queries, saw {delta}"
+    );
+    term.quit_after_clear();
+}
+
+#[test]
+fn external_message_costs_at_most_two_dsr() {
+    #[cfg(feature = "external_printer")]
+    {
+        let term = TestTerm::spawn();
+        term.expect_screen("tst> ");
+        let base = term.dsr_count();
+        // One query for the post-submit read_line init; one to re-verify
+        // after the untracked message rows.
+        term.send(":ext ping<Enter>");
+        term.expect_contains("ping");
+        term.send("x");
+        term.expect_contains("tst> x");
+        let delta = term.dsr_count() - base;
+        assert!(
+            delta <= 2,
+            "external message should cost at most 2 queries, saw {delta}"
+        );
+        term.quit_after_clear();
+    }
 }

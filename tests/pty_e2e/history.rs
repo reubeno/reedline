@@ -58,6 +58,126 @@ fn ctrl_r_reverse_search_finds_and_aborts() {
 }
 
 #[test]
+fn ctrl_r_cycles_through_multiple_matches() {
+    let term = TestTerm::builder()
+        .history(&["first match", "second match"])
+        .spawn();
+    term.expect_cursor(0, 5);
+    term.send("<C-r>match");
+    // Most recent match first; Ctrl-R again walks to the older one
+    // (UX checklist: "Can you find more hits by pressing Ctrl-r?").
+    term.expect_contains("(search:match) second match");
+    term.send("<C-r>");
+    term.expect_contains("(search:match) first match");
+    term.send("<C-c>");
+    term.expect_fresh_prompt();
+    term.quit();
+}
+
+#[test]
+fn ctrl_r_enter_accepts_match_into_buffer() {
+    let term = with_history();
+    term.expect_cursor(0, 5);
+    term.send("<C-r>fir<Enter>");
+    // Enter accepts the match into the buffer and leaves search; it does
+    // not submit. A second Enter submits.
+    term.expect_screen("tst> first command");
+    term.expect_cursor(0, 18);
+    term.send("<Enter>");
+    term.expect_contains("GOT: first command");
+    term.quit();
+}
+
+#[test]
+fn resubmitting_recalled_entry_does_not_duplicate_history() {
+    let term = TestTerm::builder().history(&["older", "recent"]).spawn();
+    term.expect_cursor(0, 5);
+    term.send("<Up><Enter>"); // recall "recent" and run it again
+    term.expect_contains("GOT: recent");
+    // UX checklist: the re-run must not be duplicated in history. With no
+    // duplicate, two <Up> presses reach "older"; with one, they would land
+    // on "recent" twice.
+    term.send("<Up>");
+    term.expect("first recall on cursor row", |screen| {
+        let (row, _) = screen.cursor_position();
+        let text = crate::harness::screen_rows(screen)
+            .get(row as usize)
+            .cloned()
+            .unwrap_or_default();
+        if text == "tst> recent" {
+            Ok(())
+        } else {
+            Err(format!("cursor row: {text:?}"))
+        }
+    });
+    term.send("<Up>");
+    term.expect("second recall reaches the older entry", |screen| {
+        let (row, _) = screen.cursor_position();
+        let text = crate::harness::screen_rows(screen)
+            .get(row as usize)
+            .cloned()
+            .unwrap_or_default();
+        if text == "tst> older" {
+            Ok(())
+        } else {
+            Err(format!("cursor row: {text:?}"))
+        }
+    });
+    term.send("<C-c>");
+    term.expect_fresh_prompt();
+    term.quit();
+}
+
+#[test]
+fn multiline_history_entry_recalls_and_searches() {
+    let term = TestTerm::spawn();
+    term.expect_cursor(0, 5);
+    term.send("top<A-Enter>bottom<Enter>");
+    term.expect_contains("GOT: top");
+    // Recall renders the entry across two rows again.
+    term.send("<Up>");
+    term.expect_contains("tst> top");
+    term.expect_contains("::: bottom");
+    term.send("<C-c>");
+    term.expect_fresh_prompt();
+    // Reverse search against a multi-line entry must render sanely.
+    term.send("<C-r>bot");
+    term.expect_contains("(search:bot)");
+    term.send("<C-c>");
+    term.expect_fresh_prompt();
+    term.quit();
+}
+
+#[test]
+fn exclusion_prefix_keeps_entry_out_of_history() {
+    let term = TestTerm::builder().env("FIX_EXCLUDE_PREFIX", " ").spawn();
+    term.expect_cursor(0, 5);
+    term.send(" secret<Enter>");
+    term.expect_contains("GOT:  secret");
+    term.send("visible<Enter>");
+    term.expect_contains("GOT: visible");
+    // Two recalls: the space-prefixed entry must never reappear.
+    term.send("<Up>");
+    term.expect("visible entry recalled", |screen| {
+        let (row, _) = screen.cursor_position();
+        let text = crate::harness::screen_rows(screen)
+            .get(row as usize)
+            .cloned()
+            .unwrap_or_default();
+        if text == "tst> visible" {
+            Ok(())
+        } else {
+            Err(format!("cursor row: {text:?}"))
+        }
+    });
+    term.send("<Up>");
+    term.expect_unchanged(crate::harness::unchanged_window());
+    term.send("<C-c>");
+    term.expect_fresh_prompt();
+    term.quit();
+}
+
+#[test]
 fn recalled_entry_renders_then_edits_cleanly() {
     let term = with_history();
     term.expect_cursor(0, 5);

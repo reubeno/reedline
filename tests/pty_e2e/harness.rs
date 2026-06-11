@@ -27,17 +27,33 @@ const DSR_QUERY: &[u8] = b"\x1b[6n";
 /// only, scrollback just avoids losing context in failure dumps.
 const SCROLLBACK: usize = 100;
 
+/// All timing in the harness derives from these two knobs so CI load is
+/// compensated in one place.
+fn time_scale() -> u64 {
+    if std::env::var_os("CI").is_some() {
+        3
+    } else {
+        1
+    }
+}
+
 fn base_timeout() -> Duration {
     let ms = std::env::var("PTY_E2E_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(5_000u64);
-    let scale = if std::env::var_os("CI").is_some() {
-        3
-    } else {
-        1
-    };
-    Duration::from_millis(ms * scale)
+    Duration::from_millis(ms * time_scale())
+}
+
+/// Pause inserted after a bare `<Esc>` so the terminal-side parser sees a
+/// standalone Escape rather than the start of an Alt-chord.
+fn esc_pause() -> Duration {
+    Duration::from_millis(50 * time_scale())
+}
+
+/// Window for `expect_unchanged`-style negative assertions.
+pub fn unchanged_window() -> Duration {
+    Duration::from_millis(200 * time_scale())
 }
 
 struct ScreenState {
@@ -60,12 +76,18 @@ pub struct TestTerm {
     master: Box<dyn MasterPty + Send>,
     child: Box<dyn Child + Send + Sync>,
     reader_thread: Option<std::thread::JoinHandle<()>>,
+    /// Last line of the configured prompt, right-trimmed (e.g. "tst>"); used
+    /// to recognize a fresh prompt row.
+    prompt_marker: String,
+    /// Flag file watched by the fixture's break-signal thread, if enabled.
+    break_flag: Option<PathBuf>,
 }
 
 pub struct TestTermBuilder {
     rows: u16,
     cols: u16,
     envs: Vec<(String, String)>,
+    break_flag: Option<PathBuf>,
 }
 
 impl TestTermBuilder {
@@ -112,6 +134,20 @@ impl TestTermBuilder {
         self.env("FIX_EDITOR_CMD", snippet)
     }
 
+    /// Enable the host-driven break signal; trigger it from a test with
+    /// [`TestTerm::trigger_break`].
+    pub fn break_signal(mut self) -> Self {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let path = std::env::temp_dir().join(format!(
+            "reedline-pty-e2e-break-{}-{unique}.flag",
+            std::process::id(),
+        ));
+        let _ = std::fs::remove_file(&path);
+        self.break_flag = Some(path.clone());
+        self.env("FIX_BREAK_FLAG", path.to_str().expect("utf-8 temp path"))
+    }
+
     pub fn spawn(self) -> TestTerm {
         let fixture = ensure_fixture_built();
 
@@ -155,35 +191,42 @@ impl TestTermBuilder {
             std::thread::spawn(move || pump_output(reader, &shared, &writer))
         };
 
+        let marker = strip_csi(
+            self.envs
+                .iter()
+                .find(|(k, _)| k == "FIX_PROMPT")
+                .map(|(_, v)| v.replace("\\n", "\n"))
+                .unwrap_or_else(|| "tst> ".into())
+                .lines()
+                .last()
+                .unwrap_or("tst> "),
+        )
+        .trim_end()
+        .to_string();
+
         let term = TestTerm {
             shared,
             writer,
             master: pty.master,
             child,
             reader_thread: Some(reader_thread),
+            prompt_marker: marker.clone(),
+            break_flag: self.break_flag,
         };
 
         // Block until the first prompt is painted. Input sent before the
         // fixture enables raw mode would be echoed by the line discipline
-        // and pollute the screen, so no test may race the startup.
-        let marker = self
-            .envs
-            .iter()
-            .find(|(k, _)| k == "FIX_PROMPT")
-            .map(|(_, v)| v.replace("\\n", "\n"))
-            .unwrap_or_else(|| "tst> ".into())
-            .lines()
-            .last()
-            .unwrap_or("tst> ")
-            .trim_end()
-            .to_string();
+        // and pollute the screen, so no test may race the startup. A prompt
+        // wider than the screen wraps, so the cursor row holding only a
+        // suffix of the prompt also counts.
         term.expect("initial prompt", move |screen| {
             let (row, _) = screen.cursor_position();
             let text = screen_rows(screen)
                 .get(row as usize)
                 .cloned()
                 .unwrap_or_default();
-            if text.starts_with(&marker) {
+            if text.starts_with(&marker) || (!text.is_empty() && marker.ends_with(text.trim_end()))
+            {
                 Ok(())
             } else {
                 Err(format!("cursor row reads {text:?}"))
@@ -254,6 +297,26 @@ fn pump_output(
     }
 }
 
+/// Remove CSI escape sequences (`ESC [ ... final-byte`), so a prompt
+/// configured with color codes can be matched against rendered text.
+fn strip_csi(s: &str) -> String {
+    let mut out = String::new();
+    let mut chars = s.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\x1b' && chars.peek() == Some(&'[') {
+            chars.next();
+            for f in chars.by_ref() {
+                if ('\x40'..='\x7e').contains(&f) {
+                    break;
+                }
+            }
+        } else {
+            out.push(c);
+        }
+    }
+    out
+}
+
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -281,6 +344,7 @@ impl TestTerm {
             rows: 24,
             cols: 80,
             envs: Vec::new(),
+            break_flag: None,
         }
     }
 
@@ -296,7 +360,7 @@ impl TestTerm {
         let chunks = keys_to_chunks(keys);
         for (i, chunk) in chunks.iter().enumerate() {
             if i > 0 {
-                std::thread::sleep(Duration::from_millis(50));
+                std::thread::sleep(esc_pause());
             }
             if !chunk.is_empty() {
                 self.send_raw(chunk);
@@ -321,9 +385,19 @@ impl TestTerm {
         self.send_raw(&bytes);
     }
 
-    /// Resize the PTY (delivers SIGWINCH to the child) and the emulated
-    /// screen together.
+    /// Resize the emulated screen and the PTY (delivers SIGWINCH to the
+    /// child) together.
+    ///
+    /// The emulator resizes first, under the state lock, so any repaint the
+    /// child performs in response to SIGWINCH is parsed at the new size —
+    /// the same order a real terminal uses (grid first, then signal).
     pub fn resize(&self, rows: u16, cols: u16) {
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.parser.screen_mut().set_size(rows, cols);
         self.master
             .resize(PtySize {
                 rows,
@@ -332,15 +406,31 @@ impl TestTerm {
                 pixel_height: 0,
             })
             .expect("resize pty");
-        let mut state = self
-            .shared
-            .state
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        state.parser.screen_mut().set_size(rows, cols);
         state.generation += 1;
         drop(state);
         self.shared.cond.notify_all();
+    }
+
+    /// Trigger the fixture's external break signal (requires the builder's
+    /// `break_signal()`) and wait for the fixture to acknowledge that
+    /// `read_line` returned `Signal::ExternalBreak`.
+    pub fn trigger_break(&self) {
+        let path = self
+            .break_flag
+            .as_ref()
+            .expect("break_signal() not enabled on this TestTerm");
+        let ack = format!("{}.ack", path.display());
+        let _ = std::fs::remove_file(&ack);
+        std::fs::write(path, b"1").expect("write break flag");
+        let deadline = Instant::now() + base_timeout();
+        while !std::path::Path::new(&ack).exists() {
+            assert!(
+                Instant::now() < deadline,
+                "fixture never acknowledged the break signal"
+            );
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        let _ = std::fs::remove_file(&ack);
     }
 
     // ---- queries ---------------------------------------------------------
@@ -355,6 +445,7 @@ impl TestTerm {
     }
 
     /// Current visible screen as text, rows right-trimmed, for debugging.
+    #[allow(dead_code)]
     pub fn screen_text(&self) -> String {
         let state = self
             .shared
@@ -426,10 +517,15 @@ impl TestTerm {
                 want.push(String::new());
             }
             if got == want {
-                Ok(())
-            } else {
-                Err("contents differ".to_string())
+                return Ok(());
             }
+            // Want-vs-got with the first differing row marked.
+            let mut msg = String::from("contents differ\n  want | got\n");
+            for (i, (w, g)) in want.iter().zip(got.iter()).enumerate() {
+                let mark = if w == g { ' ' } else { '>' };
+                msg.push_str(&format!("{mark} {i:>2} {w:?} | {g:?}\n"));
+            }
+            Err(msg)
         });
     }
 
@@ -522,12 +618,41 @@ impl TestTerm {
         }
     }
 
+    /// Wait until the cursor sits on a fresh, empty prompt row: the row
+    /// starts with the prompt, and between the prompt and the cursor there
+    /// is nothing but an optional vi mode indicator. A right prompt may
+    /// trail at the right edge.
+    pub fn expect_fresh_prompt(&self) {
+        let marker = self.prompt_marker.clone();
+        self.expect("a fresh empty prompt at the cursor", move |screen| {
+            let (row, col) = screen.cursor_position();
+            let text = row_text(screen, row);
+            if !text.starts_with(&marker) {
+                return Err(format!("cursor row reads {text:?}"));
+            }
+            let between: String = (0..col)
+                .filter_map(|c| screen.cell(row, c))
+                .map(|cell| cell.contents())
+                .collect::<String>()
+                .chars()
+                .skip(marker.chars().count())
+                .collect();
+            match between.trim() {
+                "" | "[i]" | "[n]" => Ok(()),
+                other => Err(format!("text before cursor: {other:?}")),
+            }
+        });
+    }
+
     // ---- lifecycle -------------------------------------------------------
 
     /// Abort any in-progress buffer with Ctrl-C, then `quit`.
     pub fn quit_after_clear(self) {
         self.send("<C-c>");
-        self.expect_contains("(ctrl-c)");
+        // Sync on the *fresh prompt row*, not the host's "(ctrl-c)" echo: a
+        // prior abort earlier in the test would satisfy a contains-check
+        // immediately and let :quit race the repaint.
+        self.expect_fresh_prompt();
         self.quit();
     }
 
@@ -535,20 +660,43 @@ impl TestTerm {
     /// exits cleanly.
     pub fn quit(mut self) {
         self.send(":quit<Enter>");
+        self.wait_clean_exit(":quit");
+    }
+
+    /// Wait for the fixture to exit on its own (e.g. after Ctrl-D) and
+    /// assert a clean exit status.
+    pub fn expect_eof(mut self) {
+        self.wait_clean_exit("eof");
+    }
+
+    fn wait_clean_exit(&mut self, why: &str) {
+        // Wait for EOF on the pty (reader thread sets `eof` and notifies)
+        // rather than poll-sleeping on the child.
         let deadline = Instant::now() + base_timeout();
-        loop {
-            if let Some(status) = self.child.try_wait().expect("wait for fixture") {
-                assert!(status.success(), "fixture exited with {status:?}");
-                break;
+        let mut state = self
+            .shared
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        while !state.eof {
+            let now = Instant::now();
+            if now >= deadline {
+                let screen = dump_screen(state.parser.screen());
+                panic!("fixture did not exit ({why})\n--- screen ---\n{screen}");
             }
-            if Instant::now() >= deadline {
-                panic!(
-                    "fixture did not exit after :quit\n--- screen ---\n{}",
-                    self.screen_text()
-                );
-            }
-            std::thread::sleep(Duration::from_millis(10));
+            let (next, _) = self
+                .shared
+                .cond
+                .wait_timeout(state, deadline - now)
+                .unwrap_or_else(|e| {
+                    let (guard, timeout) = e.into_inner();
+                    (guard, timeout)
+                });
+            state = next;
         }
+        drop(state);
+        let status = self.child.wait().expect("wait for fixture");
+        assert!(status.success(), "fixture exited with {status:?}");
     }
 }
 
@@ -576,7 +724,7 @@ pub fn screen_rows(screen: &vt100::Screen) -> Vec<String> {
                 match screen.cell(row, col) {
                     Some(cell) if cell.is_wide_continuation() => {}
                     Some(cell) if cell.contents().is_empty() => text.push(' '),
-                    Some(cell) => text.push_str(&cell.contents()),
+                    Some(cell) => text.push_str(cell.contents()),
                     None => text.push(' '),
                 }
             }
@@ -636,7 +784,7 @@ fn ensure_fixture_built() -> PathBuf {
         if cfg!(feature = "external_printer") {
             cmd.args(["--features", "external_printer"]);
         }
-        if profile_dir.file_name().is_some_and(|n| n == "release") {
+        if profile_dir.file_name().map_or(false, |n| n == "release") {
             cmd.arg("--release");
         }
         let status = cmd.status().expect("run cargo build for pty_fixture");

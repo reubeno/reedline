@@ -44,6 +44,35 @@ fn ctrl_l_moves_prompt_to_top_and_preserves_buffer() {
 }
 
 #[test]
+fn ctrl_l_with_multiline_buffer_repaints_whole_buffer() {
+    let term = TestTerm::spawn();
+    term.send("one<Enter>");
+    term.expect_line(2, "tst>");
+    term.send("aa<A-Enter>bb<A-Enter>cc<C-l>");
+    term.expect_screen(
+        "tst> aa\n\
+         ::: bb\n\
+         ::: cc",
+    );
+    term.expect_cursor(2, 6);
+    term.send("<Enter>");
+    term.expect_contains("GOT: aa");
+    term.quit();
+}
+
+#[test]
+fn ctrl_l_when_prompt_already_at_top_is_idempotent() {
+    let term = TestTerm::spawn();
+    term.expect_cursor(0, 5);
+    term.send("abc<C-l>");
+    term.expect_screen("tst> abc");
+    term.expect_cursor(0, 8);
+    // A no-op clear must not scroll, duplicate, or repaint endlessly.
+    term.expect_unchanged(crate::harness::unchanged_window());
+    term.quit_after_clear();
+}
+
+#[test]
 fn ctrl_l_then_further_editing_stays_coherent() {
     let term = TestTerm::spawn();
     term.send("one<Enter>");
