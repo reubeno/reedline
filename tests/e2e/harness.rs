@@ -1,7 +1,7 @@
 //! PTY end-to-end test harness for reedline.
 //!
-//! Spawns the `pty_fixture` example (a deterministic reedline REPL, see
-//! `examples/pty_fixture.rs`) inside a real pseudo-terminal, feeds its output
+//! Spawns the `e2e_fixture` example (a deterministic reedline REPL, see
+//! `examples/e2e_fixture.rs`) inside a real pseudo-terminal, feeds its output
 //! through an in-memory VT100 screen, and lets tests make Neovim-style
 //! "eventual screen state" assertions: every `expect_*` helper retries until
 //! the screen matches or a timeout expires, so tests never sleep.
@@ -38,7 +38,7 @@ fn time_scale() -> u64 {
 }
 
 fn base_timeout() -> Duration {
-    let ms = std::env::var("PTY_E2E_TIMEOUT_MS")
+    let ms = std::env::var("E2E_TIMEOUT_MS")
         .ok()
         .and_then(|v| v.parse().ok())
         .unwrap_or(5_000u64);
@@ -140,7 +140,7 @@ impl TestTermBuilder {
         static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         let unique = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let path = std::env::temp_dir().join(format!(
-            "reedline-pty-e2e-break-{}-{unique}.flag",
+            "reedline-e2e-break-{}-{unique}.flag",
             std::process::id(),
         ));
         let _ = std::fs::remove_file(&path);
@@ -762,7 +762,7 @@ fn dump_screen(screen: &vt100::Screen) -> String {
 
 static FIXTURE_BUILD: Once = Once::new();
 
-/// Build the `pty_fixture` example (idempotent; cargo no-ops when fresh) and
+/// Build the `e2e_fixture` example (idempotent; cargo no-ops when fresh) and
 /// return its path. Tests run after `cargo test`/`cargo nextest run` has
 /// released the build lock, so invoking cargo here is safe; concurrent test
 /// processes serialize on cargo's own lock.
@@ -774,21 +774,21 @@ fn ensure_fixture_built() -> PathBuf {
         .and_then(|deps| deps.parent())
         .expect("locate target profile dir")
         .to_path_buf();
-    let fixture = profile_dir.join("examples").join("pty_fixture");
+    let fixture = profile_dir.join("examples").join("e2e_fixture");
 
     FIXTURE_BUILD.call_once(|| {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let mut cmd = std::process::Command::new(cargo);
         cmd.current_dir(env!("CARGO_MANIFEST_DIR"));
-        cmd.args(["build", "--example", "pty_fixture"]);
+        cmd.args(["build", "--example", "e2e_fixture"]);
         if cfg!(feature = "external_printer") {
             cmd.args(["--features", "external_printer"]);
         }
         if profile_dir.file_name().map_or(false, |n| n == "release") {
             cmd.arg("--release");
         }
-        let status = cmd.status().expect("run cargo build for pty_fixture");
-        assert!(status.success(), "building the pty_fixture example failed");
+        let status = cmd.status().expect("run cargo build for e2e_fixture");
+        assert!(status.success(), "building the e2e_fixture example failed");
     });
 
     assert!(

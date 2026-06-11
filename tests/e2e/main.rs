@@ -1,6 +1,6 @@
 //! End-to-end tests that drive reedline inside a real PTY.
 //!
-//! See `pty_e2e/harness.rs` for the harness and `examples/pty_fixture.rs`
+//! See `harness.rs` for the harness and `examples/e2e_fixture.rs`
 //! for the fixture REPL under test. Unix-only for now (Windows ConPTY is a
 //! possible follow-up).
 #![cfg(unix)]

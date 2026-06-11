@@ -43,7 +43,7 @@ rstest = { version = "0.23.0", default-features = false }
 serde_json = "1.0"
 tempfile = "3.3.0"
 
-# Used by the PTY-based end-to-end tests (tests/pty_e2e/)
+# Used by the PTY-based end-to-end tests (tests/e2e/)
 [target.'cfg(unix)'.dev-dependencies]
 portable-pty = "0.9"
 vt100 = "0.16"

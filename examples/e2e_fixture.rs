@@ -1,5 +1,5 @@
 //! Deterministic reedline instance used by the PTY end-to-end tests
-//! (`tests/pty_e2e/`). Not intended for interactive use.
+//! (`tests/e2e/`). Not intended for interactive use.
 //!
 //! Behavior is configured entirely through `FIX_*` environment variables so
 //! the test harness can spawn one binary in many configurations:
