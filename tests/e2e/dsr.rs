@@ -4,7 +4,6 @@
 //! terminal where the cursor is exactly once per `read_line` (on entry) and
 //! never on the steady-state repaint path.
 
-use std::time::Duration;
 
 use crate::harness::TestTerm;
 
@@ -41,7 +40,7 @@ fn typing_and_repainting_issue_no_dsr() {
     term.expect_screen("tst> ZabcdXYef");
     // Once painted, the screen must be fully quiescent: no late repaints,
     // queries, or other terminal traffic.
-    term.expect_unchanged(Duration::from_millis(200));
+    term.expect_unchanged();
     assert_eq!(
         term.dsr_count(),
         baseline,
@@ -148,24 +147,24 @@ fn resize_costs_at_most_two_dsr() {
     term.quit_after_clear();
 }
 
+#[cfg(feature = "external_printer")]
 #[test]
 fn external_message_costs_at_most_two_dsr() {
-    #[cfg(feature = "external_printer")]
-    {
-        let term = TestTerm::spawn();
-        term.expect_screen("tst> ");
-        let base = term.dsr_count();
-        // One query for the post-submit read_line init; one to re-verify
-        // after the untracked message rows.
-        term.send(":ext ping<Enter>");
-        term.expect_contains("ping");
-        term.send("x");
-        term.expect_contains("tst> x");
-        let delta = term.dsr_count() - base;
-        assert!(
-            delta <= 2,
-            "external message should cost at most 2 queries, saw {delta}"
-        );
-        term.quit_after_clear();
-    }
+    let term = TestTerm::spawn();
+    term.expect_screen("tst> ");
+    let base = term.dsr_count();
+    // One query for the post-submit read_line init; one to re-verify
+    // after the untracked message rows. Sync on the *standalone* message
+    // row (row 1) — the typed ":ext ping" echo on row 0 also contains
+    // "ping" and would satisfy a contains-check before the message prints.
+    term.send(":ext ping<Enter>");
+    term.expect_line(1, "ping");
+    term.send("x");
+    term.expect_cursor_line("tst> x");
+    let delta = term.dsr_count() - base;
+    assert!(
+        delta <= 2,
+        "external message should cost at most 2 queries, saw {delta}"
+    );
+    term.quit_after_clear();
 }

@@ -68,7 +68,7 @@ fn ctrl_l_when_prompt_already_at_top_is_idempotent() {
     term.expect_screen("tst> abc");
     term.expect_cursor(0, 8);
     // A no-op clear must not scroll, duplicate, or repaint endlessly.
-    term.expect_unchanged(crate::harness::unchanged_window());
+    term.expect_unchanged();
     term.quit_after_clear();
 }
 

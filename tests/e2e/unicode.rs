@@ -59,7 +59,17 @@ fn checklist_emoji_line_round_trips() {
     term.send("<Home>");
     term.expect_cursor(0, 5);
     term.send("<End><Enter>");
+    // Fidelity check: the ZWJ cluster and the text after it survive the
+    // round trip, not just the prefix.
     term.expect_contains("GOT: Emoji test 😊 checks");
+    term.expect("submitted line keeps the ZWJ emoji and tail", |screen| {
+        let rows = crate::harness::screen_rows(screen);
+        match rows.iter().find(|r| r.starts_with("GOT: ")) {
+            Some(row) if row.contains('🤦') && row.ends_with("unicode") => Ok(()),
+            Some(row) => Err(format!("GOT row mangled: {row:?}")),
+            None => Err("no GOT row".into()),
+        }
+    });
     term.quit();
 }
 

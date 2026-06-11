@@ -60,16 +60,10 @@ fn partial_completion_inserts_common_prefix() {
         .spawn();
     term.expect_cursor(0, 5);
     // Common prefix of alpha/alphabet/alphard is "alpha" (#1001 class).
+    // Exact row: a full-candidate insertion like "alphabet" must fail this.
     term.send("al<Tab>");
     term.expect_contains("alphabet");
-    term.expect("buffer to hold the common prefix", |screen| {
-        let row = &screen_rows(screen)[0];
-        if row.contains("alpha") {
-            Ok(())
-        } else {
-            Err(format!("row 0: {row:?}"))
-        }
-    });
+    term.expect_line(0, "tst> | alpha");
     term.quit_after_clear();
 }
 
@@ -116,20 +110,18 @@ fn menu_at_bottom_scrolls_prompt_up() {
     term.expect_line(7, "tst>");
 
     term.send("al<Tab>");
-    // Menu rows need space below the prompt: the anchor must scroll up and
-    // the candidates must be visible.
-    term.expect_contains("alphabet");
-    term.expect("prompt line to scroll above the menu", |screen| {
-        let rows = screen_rows(screen);
-        // The menu marker ("| ") sits between prompt and buffer.
-        match rows
-            .iter()
-            .position(|r| r.starts_with("tst>") && r.contains("al"))
-        {
-            Some(r) if r < 7 => Ok(()),
-            Some(r) => Err(format!("prompt still at bottom row {r}")),
-            None => Err(format!("prompt line not found: {rows:?}")),
-        }
-    });
+    // The menu needs a row below the prompt: the anchor scrolls up exactly
+    // one row and the filler above must survive intact — a stale anchor
+    // clobbers or duplicates these rows.
+    term.expect_screen(
+        "fill-005\n\
+         fill-006\n\
+         fill-007\n\
+         fill-008\n\
+         fill-009\n\
+         fill-010\n\
+         tst> | al\n\
+         alpha     alphabet  alphard",
+    );
     term.quit_after_clear();
 }

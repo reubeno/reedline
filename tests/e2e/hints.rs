@@ -2,7 +2,7 @@
 //! (UX checklist "completion/hinting"). The fixture's hinter uses dark gray
 //! (palette index 8).
 
-use crate::harness::TestTerm;
+use crate::harness::{TestTerm, DARK_GRAY};
 
 fn hinting_term() -> TestTerm {
     TestTerm::builder()
@@ -20,7 +20,7 @@ fn hint_renders_dimmed_after_cursor() {
     // the cursor stays after the typed text.
     term.expect_line(0, "tst> hello world");
     term.expect_cursor(0, 7);
-    term.expect_fg(0, 7..16, vt100::Color::Idx(8));
+    term.expect_fg(0, 7..16, DARK_GRAY);
     term.quit_after_clear();
 }
 
@@ -74,10 +74,20 @@ fn hint_wrapping_at_bottom_row_scrolls_cleanly() {
         .spawn();
     term.send(":fill 6<Enter>");
     term.expect_line(5, "tst>");
-    // Typing the prefix paints a hint that wraps past the bottom row; the
-    // painter must scroll the anchor up rather than truncate or clobber.
+    // Typing the prefix paints a hint that wraps past the bottom row
+    // (5 + 21 = 26 cells -> 2 rows): the anchor must scroll up exactly one
+    // row, preserving the filler above, with the wrapped hint tail on the
+    // bottom row.
     term.send("abcde");
-    term.expect_contains("abcdefghij");
+    term.expect_screen(
+        "fill-003\n\
+         fill-004\n\
+         fill-005\n\
+         fill-006\n\
+         tst> abcdefghij klmn\n\
+         opqrst",
+    );
+    term.expect_cursor(4, 10);
     term.send("<C-f><Enter>");
     term.expect_contains("GOT: abcdefghij");
     term.quit();

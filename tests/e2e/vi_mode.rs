@@ -17,13 +17,9 @@ fn insert_then_normal_mode_edits() {
     // `0` jumps to line start, `x` deletes the char under the cursor.
     term.send("0x");
     term.expect_screen("tst> [n] bc");
-    // Vi mode (normal) persists across read_line calls: abort, then
-    // re-enter insert mode so `:quit` is typed as text.
-    term.send("<C-c>");
-    term.expect_fresh_prompt();
-    term.send("i");
-    term.expect_contains("[i]");
-    term.quit();
+    // Vi mode (normal) persists across read_line calls; quit_from_vi
+    // re-enters insert mode before typing :quit.
+    term.quit_from_vi();
 }
 
 #[test]
@@ -44,9 +40,9 @@ fn normal_mode_word_motions_and_append() {
     term.send("<Enter>");
     term.expect_contains("GOT: one two !");
     // Submitting resets vi to insert mode for the next line (unlike Ctrl-C,
-    // which preserves normal mode), so :quit can be typed directly.
+    // which preserves normal mode); quit_from_vi handles either case.
     term.expect_contains("[i]");
-    term.quit();
+    term.quit_from_vi();
 }
 
 #[test]

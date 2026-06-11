@@ -1,6 +1,6 @@
 //! Terminal resize: rewrapping and repaint correctness after SIGWINCH.
 
-use crate::harness::TestTerm;
+use crate::harness::{screen_rows, TestTerm};
 
 #[test]
 fn narrowing_rewraps_long_buffer() {
@@ -76,7 +76,7 @@ fn multiline_prompt_survives_resize_recalibration() {
     term.resize(10, 25);
     term.expect_contains("tst> hello");
     term.expect("exactly one info line above the prompt", |screen| {
-        let rows = crate::harness::screen_rows(screen);
+        let rows = screen_rows(screen);
         let infos = rows.iter().filter(|r| r.as_str() == "info").count();
         if infos == 1 {
             Ok(())
@@ -130,14 +130,7 @@ fn resize_with_open_menu_keeps_candidates() {
     term.expect_contains("alpha");
     // Menu stays usable after the resize repaint.
     term.send("<Enter>");
-    term.expect("completed candidate in buffer", |screen| {
-        let row = &crate::harness::screen_rows(screen)[0];
-        if row.starts_with("tst> alpha") {
-            Ok(())
-        } else {
-            Err(format!("row 0: {row:?}"))
-        }
-    });
+    term.expect_cursor_line("tst> alpha");
     term.quit_after_clear();
 }
 

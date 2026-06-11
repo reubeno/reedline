@@ -28,6 +28,7 @@ mod multiline_edit;
 mod resize;
 mod right_prompt;
 mod scrolling;
+mod selection;
 mod suspension;
 mod transient;
 mod unicode;

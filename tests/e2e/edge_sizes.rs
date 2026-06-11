@@ -7,10 +7,17 @@ fn two_row_terminal_is_usable() {
     let term = TestTerm::builder().size(2, 30).spawn();
     term.expect_line(0, "tst>");
     term.send("hi<Enter>");
-    // Output scrolls through a 2-row window; the session must keep working.
-    term.expect_contains("tst>");
+    // Output scrolls through the 2-row window: the echo and the fresh
+    // prompt are all that remain visible.
+    term.expect_screen(
+        "GOT: hi\n\
+         tst> ",
+    );
     term.send("again<Enter>");
-    term.expect_contains("GOT: again");
+    term.expect_screen(
+        "GOT: again\n\
+         tst> ",
+    );
     term.quit();
 }
 

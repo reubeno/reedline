@@ -43,7 +43,7 @@ fn prompt_after_partial_output_paints_and_edits_cleanly() {
     // The partial host line above must remain untouched by repaints —
     // enforced as a real negative: nothing may change once painted.
     term.expect_line(1, "stub");
-    term.expect_unchanged(crate::harness::unchanged_window());
+    term.expect_unchanged();
     term.quit_after_clear();
 }
 
@@ -51,21 +51,20 @@ fn prompt_after_partial_output_paints_and_edits_cleanly() {
 fn host_output_ending_exactly_at_last_column() {
     let term = TestTerm::builder().size(6, 20).spawn();
     term.expect_cursor(0, 5);
-    // ":raw " + 14 chars = a 20-cell output row: the cursor ends pending at
-    // the last column. The next prompt must start on a fresh row without
-    // clobbering the output (this is the edge the `position.1 + 1 < row`
-    // tolerance in the drift check exists for).
-    term.send(":raw ABCDEFGHIJKLMN<Enter>");
-    term.expect_contains("ABCDEFGHIJKLMN");
-    term.expect("prompt below the full-width output", |screen| {
-        let rows = crate::harness::screen_rows(screen);
-        let out = rows.iter().position(|r| r.ends_with("ABCDEFGHIJKLMN"));
-        let prompt = rows.iter().rposition(|r| r == "tst>");
-        match (out, prompt) {
-            (Some(o), Some(p)) if p > o => Ok(()),
-            (o, p) => Err(format!("output at {o:?}, prompt at {p:?}")),
-        }
-    });
+    // A 20-char payload makes the *output* row exactly screen-width: the
+    // cursor ends pending-wrap at the last column. The next prompt must
+    // start on a fresh row without clobbering the output (this is the edge
+    // the `position.1 + 1 < row` tolerance in the drift check exists for).
+    // The typed command itself wraps (5 + 25 = 30 cells -> 2 rows).
+    let payload = "ABCDEFGHIJKLMNOPQRST"; // 20 cells
+    term.send(&format!(":raw {payload}<Enter>"));
+    term.expect_screen(&format!(
+        "tst> :raw ABCDEFGHIJ\n\
+         KLMNOPQRST\n\
+         {payload}\n\
+         tst> ",
+    ));
+    term.expect_cursor(3, 5);
     term.send("ok<Enter>");
     term.expect_contains("GOT: ok");
     term.quit();

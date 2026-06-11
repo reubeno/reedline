@@ -4,7 +4,9 @@
 //! `examples/e2e_fixture.rs`) inside a real pseudo-terminal, feeds its output
 //! through an in-memory VT100 screen, and lets tests make Neovim-style
 //! "eventual screen state" assertions: every `expect_*` helper retries until
-//! the screen matches or a timeout expires, so tests never sleep.
+//! the screen matches or a timeout expires, so tests never sleep to wait
+//! for output. (The one timing concession is on the *input* side: a short
+//! pause after a bare `<Esc>`, see [`TestTerm::send`].)
 //!
 //! The harness also acts as the "terminal side" of cursor-position queries:
 //! when the child emits `CSI 6n` (DSR), the harness replies with the emulated
@@ -52,9 +54,16 @@ fn esc_pause() -> Duration {
 }
 
 /// Window for `expect_unchanged`-style negative assertions.
-pub fn unchanged_window() -> Duration {
+fn unchanged_window() -> Duration {
     Duration::from_millis(200 * time_scale())
 }
+
+/// Colors the fixture paints with, as seen by the emulated screen. Keep in
+/// sync with `examples/e2e_fixture.rs` (highlighter / hinter styles) so the
+/// fixture and assertions agree in one place.
+pub const RED: vt100::Color = vt100::Color::Idx(1);
+pub const GREEN: vt100::Color = vt100::Color::Idx(2);
+pub const DARK_GRAY: vt100::Color = vt100::Color::Idx(8);
 
 struct ScreenState {
     parser: vt100::Parser,
@@ -565,6 +574,22 @@ impl TestTerm {
         });
     }
 
+    /// Assert the text of the row the cursor is on (right-trimmed), wherever
+    /// that row is — the go-to assertion for "the buffer now reads X" when
+    /// the prompt's row number isn't the point of the test.
+    pub fn expect_cursor_line(&self, expected: &str) {
+        let expected = expected.trim_end().to_string();
+        self.expect(&format!("cursor row to read {expected:?}"), move |screen| {
+            let (row, _) = screen.cursor_position();
+            let got = row_text(screen, row);
+            if got == expected {
+                Ok(())
+            } else {
+                Err(format!("cursor row reads {got:?}"))
+            }
+        });
+    }
+
     /// Assert the foreground color of every cell of `row` within `cols`.
     pub fn expect_fg(&self, row: u16, cols: Range<u16>, color: vt100::Color) {
         self.expect(
@@ -587,9 +612,15 @@ impl TestTerm {
         );
     }
 
-    /// Assert the screen does NOT change for `window` (Neovim's `unchanged`).
-    /// Any output that alters the visible screen within the window fails.
-    pub fn expect_unchanged(&self, window: Duration) {
+    /// Assert the screen does NOT change for the standard (CI-scaled)
+    /// window — Neovim's `unchanged`. Any output that alters the visible
+    /// screen within the window fails.
+    pub fn expect_unchanged(&self) {
+        self.expect_unchanged_for(unchanged_window());
+    }
+
+    /// `expect_unchanged` with an explicit window.
+    pub fn expect_unchanged_for(&self, window: Duration) {
         let deadline = Instant::now() + window;
         let mut state = self
             .shared
@@ -622,6 +653,9 @@ impl TestTerm {
     /// starts with the prompt, and between the prompt and the cursor there
     /// is nothing but an optional vi mode indicator. A right prompt may
     /// trail at the right edge.
+    ///
+    /// NOTE: the marker comparison counts chars, not display cells, so this
+    /// assumes the prompt itself contains no wide glyphs.
     pub fn expect_fresh_prompt(&self) {
         let marker = self.prompt_marker.clone();
         self.expect("a fresh empty prompt at the cursor", move |screen| {
@@ -657,10 +691,34 @@ impl TestTerm {
     }
 
     /// Gracefully stop the fixture (assumes an empty prompt) and assert it
-    /// exits cleanly.
+    /// exits cleanly. In vi mode this only works from insert mode (`:quit`
+    /// must be typed as text) — use [`TestTerm::quit_from_vi`] when the
+    /// mode is normal or unknown.
     pub fn quit(mut self) {
         self.send(":quit<Enter>");
         self.wait_clean_exit(":quit");
+    }
+
+    /// Vi-aware quit: abort any in-progress buffer, re-enter insert mode if
+    /// the indicator shows normal mode, then `quit`.
+    pub fn quit_from_vi(self) {
+        self.send("<C-c>");
+        self.expect_fresh_prompt();
+        let in_normal_mode = {
+            let state = self
+                .shared
+                .state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let screen = state.parser.screen();
+            let (row, _) = screen.cursor_position();
+            row_text(screen, row).contains("[n]")
+        };
+        if in_normal_mode {
+            self.send("i");
+            self.expect_cursor_line(&format!("{} [i]", self.prompt_marker));
+        }
+        self.quit();
     }
 
     /// Wait for the fixture to exit on its own (e.g. after Ctrl-D) and

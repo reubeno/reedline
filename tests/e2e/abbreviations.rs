@@ -43,7 +43,15 @@ fn abbreviation_expands_on_enter() {
 fn non_abbreviation_word_is_untouched() {
     let term = abbr_term();
     term.expect_cursor(0, 5);
-    term.send("gcox<Space>done<Enter>");
+    // Sync before the space so the expansion path actually runs and
+    // declines (a batched space would skip expansion for any word,
+    // proving nothing).
+    term.send("gcox");
+    term.expect_screen("tst> gcox");
+    term.send("<Space>");
+    term.expect_screen("tst> gcox");
+    term.expect_cursor(0, 10); // the space was inserted, not an expansion
+    term.send("done<Enter>");
     term.expect_contains("GOT: gcox done");
     term.quit();
 }

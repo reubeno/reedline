@@ -2,7 +2,7 @@
 //! prompt while `read_line` is active, and the prompt (with any in-progress
 //! input) is repainted intact below them.
 
-use crate::harness::TestTerm;
+use crate::harness::{screen_rows, TestTerm};
 
 #[test]
 fn message_prints_above_prompt() {
@@ -66,7 +66,7 @@ fn wrapped_external_message_keeps_prompt_below_it() {
     term.send(&format!(":ext {message}<Enter>"));
     term.expect_contains(&"M".repeat(20));
     term.expect("all message rows above the prompt", |screen| {
-        let rows = crate::harness::screen_rows(screen);
+        let rows = screen_rows(screen);
         let total_m: usize = rows
             .iter()
             .map(|r| r.chars().filter(|c| *c == 'M').count())

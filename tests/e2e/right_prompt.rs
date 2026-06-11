@@ -16,7 +16,8 @@ fn right_prompt_survives_typing() {
     let term = TestTerm::builder().size(6, 30).right_prompt("RP").spawn();
     term.expect_contains("RP");
     term.send("abc");
-    term.expect_line(0, "tst> abc                    RP");
+    // 30 cols: "tst> abc" (8) + 20 spaces + "RP" (2).
+    term.expect_line(0, &format!("tst> abc{}RP", " ".repeat(20)));
     term.expect_cursor(0, 8);
     term.quit_after_clear();
 }

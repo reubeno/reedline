@@ -98,31 +98,9 @@ fn resubmitting_recalled_entry_does_not_duplicate_history() {
     // duplicate, two <Up> presses reach "older"; with one, they would land
     // on "recent" twice.
     term.send("<Up>");
-    term.expect("first recall on cursor row", |screen| {
-        let (row, _) = screen.cursor_position();
-        let text = crate::harness::screen_rows(screen)
-            .get(row as usize)
-            .cloned()
-            .unwrap_or_default();
-        if text == "tst> recent" {
-            Ok(())
-        } else {
-            Err(format!("cursor row: {text:?}"))
-        }
-    });
+    term.expect_cursor_line("tst> recent");
     term.send("<Up>");
-    term.expect("second recall reaches the older entry", |screen| {
-        let (row, _) = screen.cursor_position();
-        let text = crate::harness::screen_rows(screen)
-            .get(row as usize)
-            .cloned()
-            .unwrap_or_default();
-        if text == "tst> older" {
-            Ok(())
-        } else {
-            Err(format!("cursor row: {text:?}"))
-        }
-    });
+    term.expect_cursor_line("tst> older");
     term.send("<C-c>");
     term.expect_fresh_prompt();
     term.quit();
@@ -158,20 +136,9 @@ fn exclusion_prefix_keeps_entry_out_of_history() {
     term.expect_contains("GOT: visible");
     // Two recalls: the space-prefixed entry must never reappear.
     term.send("<Up>");
-    term.expect("visible entry recalled", |screen| {
-        let (row, _) = screen.cursor_position();
-        let text = crate::harness::screen_rows(screen)
-            .get(row as usize)
-            .cloned()
-            .unwrap_or_default();
-        if text == "tst> visible" {
-            Ok(())
-        } else {
-            Err(format!("cursor row: {text:?}"))
-        }
-    });
+    term.expect_cursor_line("tst> visible");
     term.send("<Up>");
-    term.expect_unchanged(crate::harness::unchanged_window());
+    term.expect_unchanged();
     term.send("<C-c>");
     term.expect_fresh_prompt();
     term.quit();

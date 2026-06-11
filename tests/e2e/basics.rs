@@ -1,6 +1,6 @@
 //! Prompt rendering, echoing, line editing, and multi-line buffers.
 
-use crate::harness::TestTerm;
+use crate::harness::{TestTerm, RED};
 
 #[test]
 fn prompt_renders_and_cursor_sits_after_it() {
@@ -151,7 +151,7 @@ fn ansi_colored_prompt_keeps_cursor_math() {
         .prompt("\u{1b}[31mred>\u{1b}[0m ")
         .spawn();
     term.expect_line(0, "red>");
-    term.expect_fg(0, 0..4, vt100::Color::Idx(1));
+    term.expect_fg(0, 0..4, RED);
     // Escape bytes must not count toward the prompt width.
     term.expect_cursor(0, 5);
     term.send("x");
@@ -172,7 +172,7 @@ fn paste_with_newlines_becomes_multiline_buffer_not_submissions() {
          ::: two\n\
          ::: three",
     );
-    term.expect_unchanged(crate::harness::unchanged_window());
+    term.expect_unchanged();
     term.send("<Enter>");
     term.expect_contains("GOT: one");
     term.expect_contains("two");

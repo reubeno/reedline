@@ -1,7 +1,7 @@
 //! External buffer editor (`Ctrl-O`): the child process owns the tty while
 //! it runs, so reedline must re-anchor the prompt afterwards.
 
-use crate::harness::TestTerm;
+use crate::harness::{screen_rows, TestTerm};
 
 #[test]
 fn editor_replaces_buffer() {
@@ -29,7 +29,7 @@ fn editor_that_prints_to_tty_does_not_corrupt_repaint() {
     term.expect_contains("MORE-NOISE");
     term.expect_contains("tst> clean");
     term.expect("prompt to sit below the editor noise", |screen| {
-        let rows = crate::harness::screen_rows(screen);
+        let rows = screen_rows(screen);
         // Raw-mode LF preserves the column, so noise lines may be indented.
         let noise = rows.iter().position(|r| r.trim() == "MORE-NOISE");
         let prompt = rows.iter().position(|r| r.starts_with("tst> clean"));
